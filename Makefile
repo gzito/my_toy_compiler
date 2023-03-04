@@ -1,11 +1,13 @@
 all: parser
 
-OBJS = parser.o  \
-       codegen.o \
-       main.o    \
-       tokens.o  \
-       corefn.o  \
-	   native.o  \
+OUTPUT_FOLDER = ./build
+
+OBJS = $(OUTPUT_FOLDER)/parser.o  \
+       $(OUTPUT_FOLDER)/codegen.o \
+       $(OUTPUT_FOLDER)/main.o    \
+       $(OUTPUT_FOLDER)/tokens.o  \
+       $(OUTPUT_FOLDER)/corefn.o  \
+	   $(OUTPUT_FOLDER)/native.o  \
 
 LLVMCONFIG = llvm-config
 CPPFLAGS = `$(LLVMCONFIG) --cppflags` -std=c++14
@@ -23,7 +25,7 @@ parser.hpp: parser.cpp
 tokens.cpp: tokens.l parser.hpp
 	flex -o $@ $^
 
-%.o: %.cpp
+$(OUTPUT_FOLDER)/%.o: %.cpp
 	clang++ -gfull -c $(CPPFLAGS) -o $@ $<
 
 

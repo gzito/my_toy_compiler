@@ -113,9 +113,11 @@ public:
     const NIdentifier& type;
     const NIdentifier& id;
     VariableList arguments;
-    NExternDeclaration(const NIdentifier& type, const NIdentifier& id,
-            const VariableList& arguments) :
-        type(type), id(id), arguments(arguments) {}
+    
+	NExternDeclaration(const NIdentifier& type, const NIdentifier& id, const VariableList& arguments) :
+        type(type), id(id), arguments(arguments) {
+	}
+
     virtual llvm::Value* codeGen(CodeGenContext& context);
 };
 
@@ -125,8 +127,10 @@ public:
 	const NIdentifier& id;
 	VariableList arguments;
 	NBlock& block;
-	NFunctionDeclaration(const NIdentifier& type, const NIdentifier& id, 
-			const VariableList& arguments, NBlock& block) :
-		type(type), id(id), arguments(arguments), block(block) { }
+
+	NFunctionDeclaration(const NIdentifier& type, const NIdentifier& id, const VariableList& arguments, NBlock& block) :
+		type(type), id(id), arguments(arguments), block(block) {
+	}
+
 	virtual llvm::Value* codeGen(CodeGenContext& context);
 };

@@ -4,21 +4,27 @@
 
 using namespace std;
 
+static llvm::AllocaInst* CreateEntryBlockAlloca(llvm::Function* pFunction, llvm::Type* tpy, llvm::StringRef VarName)
+{
+	llvm::IRBuilder<> TmpB(&pFunction->getEntryBlock(), pFunction->getEntryBlock().begin()) ;
+	return TmpB.CreateAlloca(tpy, nullptr, VarName);
+}
+
 /* Compile the AST into a module */
 void CodeGenContext::generateCode(NBlock& root)
 {
 	std::cout << "Generating code...\n";
 	
 	/* Create the top level interpreter function to call as entry */
-	vector<Type*> argTypes;
-	FunctionType *ftype = FunctionType::get(Type::getVoidTy(MyContext), makeArrayRef(argTypes), false);
-	mainFunction = Function::Create(ftype, GlobalValue::InternalLinkage, "main", module);
-	BasicBlock *bblock = BasicBlock::Create(MyContext, "entry", mainFunction, 0);
+	vector<llvm::Type*> argTypes;
+	llvm::FunctionType *ftype = llvm::FunctionType::get(llvm::Type::getVoidTy(*MyContext), llvm::makeArrayRef(argTypes), false);
+	mainFunction = llvm::Function::Create(ftype, llvm::GlobalValue::InternalLinkage, "main", module);
+	llvm::BasicBlock *bblock = llvm::BasicBlock::Create(*MyContext, "entry", mainFunction, 0);
 	
 	/* Push a new variable/block context */
 	pushBlock(bblock);
 	root.codeGen(*this); /* emit bytecode for the toplevel block */
-	ReturnInst::Create(MyContext, bblock);
+	llvm::ReturnInst::Create(*MyContext, bblock);
 	popBlock();
 	
 	/* Print the bytecode in a human-readable format 
@@ -27,50 +33,79 @@ void CodeGenContext::generateCode(NBlock& root)
 	std::cout << "Code is generated.\n";
 	// module->dump();
 
-	legacy::PassManager pm;
+	llvm::legacy::PassManager pm;
 	// TODO:
-	pm.add(createPrintModulePass(outs()));
+	pm.add(llvm::createPrintModulePass(llvm::outs()));
 	pm.run(*module);
 }
 
 /* Executes the AST by running the main function */
-GenericValue CodeGenContext::runCode() {
-	std::cout << "Running code...\n";
-	ExecutionEngine *ee = EngineBuilder( unique_ptr<Module>(module) ).create();
+int CodeGenContext::runCode() {
+	std::cout << "Running code..." << std::endl ;
+
+	std::string error;
+
+	std::cout << "Constructing EngineBuilder..." << std::endl ;
+
+	llvm::ExecutionEngine *ee = llvm::EngineBuilder( unique_ptr<llvm::Module>(module) )
+							.setErrorStr(&error)
+							.setEngineKind(llvm::EngineKind::Interpreter)
+							.create();
+
+	if (!ee) {
+        std::cerr << "Execution Engine error: " << error << '\n';
+        return 1;
+    }
+		
+	std::cout << "Verifying module..." << std::endl ;
+
+	llvm::raw_string_ostream error_os(error);
+    if (llvm::verifyModule(*module, &error_os)) {
+        std::cerr << "Module Error: [" << std::endl;
+        std::cerr << error << std::endl ;
+        std::cerr << "]" << std::endl ;
+        return 1;
+    }
+
+	std::cout << "Finalizing object..." << std::endl ;
 	ee->finalizeObject();
-	vector<GenericValue> noargs;
-	GenericValue v = ee->runFunction(mainFunction, noargs);
-	std::cout << "Code was run.\n";
-	return v;
+	vector<llvm::GenericValue> noargs;
+
+	std::cout << "mainFunction: " << mainFunction << std::endl ;
+	llvm::GenericValue v = ee->runFunction(mainFunction, noargs);
+	
+//	std::ios::sync_with_stdio(true);
+//	std::cout << "Code was run." << std::endl ;
+	return 0;
 }
 
 /* Returns an LLVM type based on the identifier */
-static Type *typeOf(const NIdentifier& type) 
+static llvm::Type *typeOf(const NIdentifier& type) 
 {
 	if (type.name.compare("int") == 0) {
-		return Type::getInt64Ty(MyContext);
+		return llvm::Type::getInt64Ty(*MyContext);
 	}
 	else if (type.name.compare("double") == 0) {
-		return Type::getDoubleTy(MyContext);
+		return llvm::Type::getDoubleTy(*MyContext);
 	}
-	return Type::getVoidTy(MyContext);
+	return llvm::Type::getVoidTy(*MyContext);
 }
 
 /* -- Code Generation -- */
 
-Value* NInteger::codeGen(CodeGenContext& context)
+llvm::Value* NInteger::codeGen(CodeGenContext& context)
 {
 	std::cout << "Creating integer: " << value << endl;
-	return ConstantInt::get(Type::getInt64Ty(MyContext), value, true);
+	return llvm::ConstantInt::get(llvm::Type::getInt64Ty(*MyContext), value, true);
 }
 
-Value* NDouble::codeGen(CodeGenContext& context)
+llvm::Value* NDouble::codeGen(CodeGenContext& context)
 {
 	std::cout << "Creating double: " << value << endl;
-	return ConstantFP::get(Type::getDoubleTy(MyContext), value);
+	return llvm::ConstantFP::get(llvm::Type::getDoubleTy(*MyContext), value);
 }
 
-Value* NIdentifier::codeGen(CodeGenContext& context)
+llvm::Value* NIdentifier::codeGen(CodeGenContext& context)
 {
 	std::cout << "Creating identifier reference: " << name << endl;
 	if (context.locals().find(name) == context.locals().end()) {
@@ -78,59 +113,77 @@ Value* NIdentifier::codeGen(CodeGenContext& context)
 		return NULL;
 	}
 
-	// return nullptr;  
-	return new LoadInst(context.locals()[name]->getType(),context.locals()[name], name, false, context.currentBlock());
+	// return nullptr;
+	llvm::IRBuilder<> TmpB(context.currentBlock()) ;
+	return TmpB.CreateLoad(((llvm::AllocaInst*)(context.locals()[name]))->getAllocatedType(), context.locals()[name], name);
+/*	return new llvm::LoadInst(	context.locals()[name]->getType(),
+								context.locals()[name],
+								name,
+								false,
+								context.currentBlock()	);*/
 }
 
-Value* NMethodCall::codeGen(CodeGenContext& context)
+llvm::Value* NMethodCall::codeGen(CodeGenContext& context)
 {
-	Function *function = context.module->getFunction(id.name.c_str());
+	llvm::Function *function = context.module->getFunction(id.name.c_str());
 	if (function == NULL) {
 		std::cerr << "no such function " << id.name << endl;
 	}
-	std::vector<Value*> args;
+	std::vector<llvm::Value*> args;
 	ExpressionList::const_iterator it;
 	for (it = arguments.begin(); it != arguments.end(); it++) {
 		args.push_back((**it).codeGen(context));
 	}
-	CallInst *call = CallInst::Create(function, makeArrayRef(args), "", context.currentBlock());
+	llvm::CallInst *call = llvm::CallInst::Create(function, makeArrayRef(args), "", context.currentBlock());
 	std::cout << "Creating method call: " << id.name << endl;
 	return call;
 }
 
-Value* NBinaryOperator::codeGen(CodeGenContext& context)
+llvm::Value* NBinaryOperator::codeGen(CodeGenContext& context)
 {
-
 	std::cout << "Creating binary operation " << op << endl;
-	Instruction::BinaryOps instr;
+	
+	llvm::Value* L = lhs.codeGen(context) ;
+	llvm::Value* R = rhs.codeGen(context) ;
+
+	llvm::IRBuilder<> TmpB(context.currentBlock()) ;
+
 	switch (op) {
-		case TPLUS: 	instr = Instruction::Add; goto math;
-		case TMINUS: 	instr = Instruction::Sub; goto math;
-		case TMUL: 		instr = Instruction::Mul; goto math;
-		case TDIV: 		instr = Instruction::SDiv; goto math;
+		case TPLUS:
+			return TmpB.CreateAdd(L,R, "addtmp");
+
+		case TMINUS:
+			return TmpB.CreateSub(L,R, "subtmp");
+
+		case TMUL:
+			return TmpB.CreateMul(L,R, "multmp");
+
+		case TDIV:
+			return TmpB.CreateSDiv(L,R, "sdivtmp");
 				
 		/* TODO comparison */
 	}
-	return NULL;
-math:
-	return BinaryOperator::Create(instr, lhs.codeGen(context), 
-		rhs.codeGen(context), "", context.currentBlock());
+
+	return NULL ;
 }
 
-Value* NAssignment::codeGen(CodeGenContext& context)
+llvm::Value* NAssignment::codeGen(CodeGenContext& context)
 {
 	std::cout << "Creating assignment for " << lhs.name << endl;
 	if (context.locals().find(lhs.name) == context.locals().end()) {
 		std::cerr << "undeclared variable " << lhs.name << endl;
 		return NULL;
 	}
-	return new StoreInst(rhs.codeGen(context), context.locals()[lhs.name], false, context.currentBlock());
+	
+	llvm::IRBuilder<> TmpB(context.currentBlock()) ;
+	return TmpB.CreateStore(rhs.codeGen(context), context.locals()[lhs.name]);
+	/*return new llvm::StoreInst(rhs.codeGen(context), context.locals()[lhs.name], false, context.currentBlock());*/
 }
 
-Value* NBlock::codeGen(CodeGenContext& context)
+llvm::Value* NBlock::codeGen(CodeGenContext& context)
 {
 	StatementList::const_iterator it;
-	Value *last = NULL;
+	llvm::Value *last = NULL;
 	for (it = statements.begin(); it != statements.end(); it++) {
 		std::cout << "Generating code for " << typeid(**it).name() << endl;
 		last = (**it).codeGen(context);
@@ -139,25 +192,27 @@ Value* NBlock::codeGen(CodeGenContext& context)
 	return last;
 }
 
-Value* NExpressionStatement::codeGen(CodeGenContext& context)
+llvm::Value* NExpressionStatement::codeGen(CodeGenContext& context)
 {
 	std::cout << "Generating code for " << typeid(expression).name() << endl;
 	return expression.codeGen(context);
 }
 
-Value* NReturnStatement::codeGen(CodeGenContext& context)
+llvm::Value* NReturnStatement::codeGen(CodeGenContext& context)
 {
 	std::cout << "Generating return code for " << typeid(expression).name() << endl;
-	Value *returnValue = expression.codeGen(context);
+	llvm::Value *returnValue = expression.codeGen(context);
 	context.setCurrentReturnValue(returnValue);
 	return returnValue;
 }
 
-Value* NVariableDeclaration::codeGen(CodeGenContext& context)
+llvm::Value* NVariableDeclaration::codeGen(CodeGenContext& context)
 {
 	std::cout << "Creating variable declaration " << type.name << " " << id.name << endl;
-	AllocaInst *alloc = new AllocaInst(typeOf(type),4, id.name.c_str(), context.currentBlock());
-	context.locals()[id.name] = alloc;
+
+	/* llvm::AllocaInst *alloc = new llvm::AllocaInst(typeOf(type), 4, id.name.c_str(), context.currentBlock()); */
+	llvm::AllocaInst *alloc = CreateEntryBlockAlloca(context.currentBlock()->getParent(), typeOf(type), id.name);
+	context.locals()[id.name] = alloc ;
 	if (assignmentExpr != NULL) {
 		NAssignment assn(id, *assignmentExpr);
 		assn.codeGen(context);
@@ -165,46 +220,57 @@ Value* NVariableDeclaration::codeGen(CodeGenContext& context)
 	return alloc;
 }
 
-Value* NExternDeclaration::codeGen(CodeGenContext& context)
+llvm::Value* NExternDeclaration::codeGen(CodeGenContext& context)
 {
-    vector<Type*> argTypes;
+    vector<llvm::Type*> argTypes;
     VariableList::const_iterator it;
     for (it = arguments.begin(); it != arguments.end(); it++) {
         argTypes.push_back(typeOf((**it).type));
     }
-    FunctionType *ftype = FunctionType::get(typeOf(type), makeArrayRef(argTypes), false);
-    Function *function = Function::Create(ftype, GlobalValue::ExternalLinkage, id.name.c_str(), context.module);
+    llvm::FunctionType *ftype = llvm::FunctionType::get(typeOf(type), llvm::makeArrayRef(argTypes), false);
+    llvm::Function *function = llvm::Function::Create(ftype, llvm::GlobalValue::ExternalLinkage, id.name.c_str(), context.module);
     return function;
 }
 
-Value* NFunctionDeclaration::codeGen(CodeGenContext& context)
+llvm::Value* NFunctionDeclaration::codeGen(CodeGenContext& context)
 {
-	vector<Type*> argTypes;
+	vector<llvm::Type*> argTypes;
 	VariableList::const_iterator it;
 	for (it = arguments.begin(); it != arguments.end(); it++) {
 		argTypes.push_back(typeOf((**it).type));
 	}
-	FunctionType *ftype = FunctionType::get(typeOf(type), makeArrayRef(argTypes), false);
-	Function *function = Function::Create(ftype, GlobalValue::InternalLinkage, id.name.c_str(), context.module);
-	BasicBlock *bblock = BasicBlock::Create(MyContext, "entry", function, 0);
-
+	llvm::FunctionType *ftype = llvm::FunctionType::get(typeOf(type), llvm::makeArrayRef(argTypes), false);
+	llvm::Function *function = llvm::Function::Create(ftype, llvm::GlobalValue::InternalLinkage, id.name.c_str(), context.module);
+	llvm::BasicBlock *bblock = llvm::BasicBlock::Create(*MyContext, "entry", function, 0);
 	context.pushBlock(bblock);
 
-	Function::arg_iterator argsValues = function->arg_begin();
-    Value* argumentValue;
+	llvm::Function::arg_iterator argsValues = function->arg_begin();
+    llvm::Value* argumentValue;
 
+	llvm::IRBuilder<> TmpB(&function->getEntryBlock(), function->getEntryBlock().begin()) ;
 	for (it = arguments.begin(); it != arguments.end(); it++) {
 		(**it).codeGen(context);
 		
 		argumentValue = &*argsValues++;
 		argumentValue->setName((*it)->id.name.c_str());
-		StoreInst *inst = new StoreInst(argumentValue, context.locals()[(*it)->id.name], false, bblock);
+		llvm::StoreInst *inst = TmpB.CreateStore(argumentValue, context.locals()[(*it)->id.name]);
+		/*llvm::StoreInst *inst = new llvm::StoreInst(argumentValue, context.locals()[(*it)->id.name], false, bblock);*/
 	}
 	
 	block.codeGen(context);
-	ReturnInst::Create(MyContext, context.getCurrentReturnValue(), bblock);
+	llvm::ReturnInst::Create(*MyContext, context.getCurrentReturnValue(), bblock);
 
 	context.popBlock();
-	std::cout << "Creating function: " << id.name << endl;
+	std::cout << "Creating function: " << id.name << std::endl;
+
+	std::cout << "Verifying function: " << id.name << std::endl;
+	// Validate the generated code, checking for consistency.
+	// TODO: check return code
+	bool success = llvm::verifyFunction(*function);
+
+	// Optimize the function.
+	std::cout << "Optimizing function: " << id.name << std::endl;
+  	MyFPM->run(*function);
+
 	return function;
 }
