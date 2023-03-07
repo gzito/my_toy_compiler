@@ -65,6 +65,7 @@ void CodeGenContext::optimizeCode()
 
 /* Executes the AST by running the main function */
 int CodeGenContext::runCode() {
+	std::cout << "Running code..." << std::endl ;
 	std::string error;
 
 	std::cout << "Constructing EngineBuilder..." << std::endl ;
