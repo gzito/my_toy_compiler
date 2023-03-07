@@ -10,6 +10,19 @@ static llvm::AllocaInst* CreateEntryBlockAlloca(llvm::Function* pFunction, llvm:
 	return TmpB.CreateAlloca(tpy, nullptr, VarName);
 }
 
+/* 
+	Print the bytecode in a human-readable format 
+	to see if our program compiled properly
+*/
+void CodeGenContext::dumpCode()
+{
+	std::cout << "\n-----------------------------" << std::endl ;
+	llvm::legacy::PassManager pm;
+	pm.add(llvm::createPrintModulePass(llvm::outs()));
+	pm.run(*module);
+	std::cout << "-----------------------------\n" << std::endl ;
+}
+
 /* Compile the AST into a module */
 void CodeGenContext::generateCode(NBlock& root)
 {
@@ -27,29 +40,38 @@ void CodeGenContext::generateCode(NBlock& root)
 	llvm::ReturnInst::Create(*MyContext, bblock);
 	popBlock();
 	
-	/* Print the bytecode in a human-readable format 
-	   to see if our program compiled properly
-	 */
-	std::cout << "Code is generated.\n";
-	// module->dump();
+	std::cout << "Code generated.\n";
+	dumpCode();
+}
 
-	llvm::legacy::PassManager pm;
-	// TODO:
-	pm.add(llvm::createPrintModulePass(llvm::outs()));
-	pm.run(*module);
+void CodeGenContext::optimizeCode()
+{
+	std::cout << "Optimizing code..." << std::endl ;
+
+	for( auto& function : this->module->getFunctionList() ) {
+		const char* fName = function.getName().data() ;
+
+		// Validate the generated code, checking for consistency.
+		// TODO: check return code
+		bool success = llvm::verifyFunction(function);
+
+		// Optimize the function.
+		std::cout << "Optimizing function: " << fName << std::endl;
+		MyFPM->run(function);
+	}
+
+	dumpCode();
 }
 
 /* Executes the AST by running the main function */
 int CodeGenContext::runCode() {
-	std::cout << "Running code..." << std::endl ;
-
 	std::string error;
 
 	std::cout << "Constructing EngineBuilder..." << std::endl ;
 
 	llvm::ExecutionEngine *ee = llvm::EngineBuilder( unique_ptr<llvm::Module>(module) )
 							.setErrorStr(&error)
-							.setEngineKind(llvm::EngineKind::Interpreter)
+							.setEngineKind(llvm::EngineKind::JIT)
 							.create();
 
 	if (!ee) {
@@ -71,7 +93,8 @@ int CodeGenContext::runCode() {
 	ee->finalizeObject();
 	vector<llvm::GenericValue> noargs;
 
-	std::cout << "mainFunction: " << mainFunction << std::endl ;
+	std::cout << "Running code..." << std::endl ;
+	std::cout << "mainFunction: " << mainFunction->getName().data() << std::endl ;
 	llvm::GenericValue v = ee->runFunction(mainFunction, noargs);
 	
 //	std::ios::sync_with_stdio(true);
@@ -116,11 +139,6 @@ llvm::Value* NIdentifier::codeGen(CodeGenContext& context)
 	// return nullptr;
 	llvm::IRBuilder<> TmpB(context.currentBlock()) ;
 	return TmpB.CreateLoad(((llvm::AllocaInst*)(context.locals()[name]))->getAllocatedType(), context.locals()[name], name);
-/*	return new llvm::LoadInst(	context.locals()[name]->getType(),
-								context.locals()[name],
-								name,
-								false,
-								context.currentBlock()	);*/
 }
 
 llvm::Value* NMethodCall::codeGen(CodeGenContext& context)
@@ -177,7 +195,6 @@ llvm::Value* NAssignment::codeGen(CodeGenContext& context)
 	
 	llvm::IRBuilder<> TmpB(context.currentBlock()) ;
 	return TmpB.CreateStore(rhs.codeGen(context), context.locals()[lhs.name]);
-	/*return new llvm::StoreInst(rhs.codeGen(context), context.locals()[lhs.name], false, context.currentBlock());*/
 }
 
 llvm::Value* NBlock::codeGen(CodeGenContext& context)
@@ -254,23 +271,13 @@ llvm::Value* NFunctionDeclaration::codeGen(CodeGenContext& context)
 		argumentValue = &*argsValues++;
 		argumentValue->setName((*it)->id.name.c_str());
 		llvm::StoreInst *inst = TmpB.CreateStore(argumentValue, context.locals()[(*it)->id.name]);
-		/*llvm::StoreInst *inst = new llvm::StoreInst(argumentValue, context.locals()[(*it)->id.name], false, bblock);*/
 	}
 	
 	block.codeGen(context);
 	llvm::ReturnInst::Create(*MyContext, context.getCurrentReturnValue(), bblock);
 
 	context.popBlock();
-	std::cout << "Creating function: " << id.name << std::endl;
-
-	std::cout << "Verifying function: " << id.name << std::endl;
-	// Validate the generated code, checking for consistency.
-	// TODO: check return code
-	bool success = llvm::verifyFunction(*function);
-
-	// Optimize the function.
-	std::cout << "Optimizing function: " << id.name << std::endl;
-  	MyFPM->run(*function);
+	std::cout << "Created function: " << id.name << std::endl;
 
 	return function;
 }

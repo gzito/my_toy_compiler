@@ -26,6 +26,7 @@ tokens.cpp: tokens.l parser.hpp
 	flex -o $@ $^
 
 $(OUTPUT_FOLDER)/%.o: %.cpp
+	@mkdir -p $(@D)
 	clang++ -gfull -c $(CPPFLAGS) -o $@ $<
 
 

@@ -22,6 +22,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 // function pass optimization
+#include <llvm/Transforms/Utils.h>
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Scalar/GVN.h>
@@ -48,13 +49,13 @@ public:
     llvm::Module *module;
 
     // ctor
-    CodeGenContext() {
-
-        module = new llvm::Module("main", *MyContext);
+    CodeGenContext(llvm::Module* module_ptr) {
+        this->module = module_ptr;
     }
     
     void generateCode(NBlock& root);
-    
+    void optimizeCode();
+    void dumpCode();
     int runCode();
 
     std::map<std::string, llvm::Value*>& locals() { return blocks.top()->locals; }

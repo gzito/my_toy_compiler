@@ -22,6 +22,8 @@ std::unique_ptr<llvm::Module> MyModule ;
 std::unique_ptr<llvm::legacy::FunctionPassManager> MyFPM ;
 
 void initializePassManager(void) {
+  // Promote allocas to registers.
+  MyFPM->add(llvm::createPromoteMemoryToRegisterPass());	
   // Do simple "peephole" optimizations and bit-twiddling optzns.
   MyFPM->add(llvm::createInstructionCombiningPass());
   // Reassociate expressions.
@@ -51,17 +53,17 @@ int main(int argc, char **argv)
 	MyBuilder = std::make_unique<llvm::IRBuilder<>>(*MyContext);
 
     // used for jit
-	/*
 	llvm::InitializeNativeTarget();
 	llvm::InitializeNativeTargetAsmPrinter();
-	llvm::InitializeNativeTargetAsmParser();*/
+	llvm::InitializeNativeTargetAsmParser();
 
 	yyparse();
-	cout << "Program block: " << programBlock << endl;
+//	std:.cout << "Program block: " << programBlock << std::endl;
 
-	CodeGenContext context;
+	CodeGenContext context(MyModule.get());
 	createCoreFunctions(context);
 	context.generateCode(*programBlock);
+	context.optimizeCode();
 	context.runCode();
 	
 	return 0;
