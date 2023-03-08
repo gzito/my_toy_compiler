@@ -1,6 +1,6 @@
-# what i did
-Tested with LLVM V15.0.7 on Windows 10 with mingw64 (mingw-w64-x86_64-llvm and mingw-w64-x86_64-clang)  
-Added function level optimization passes
+# What changes are in this version
+I tested it with LLVM V15.0.7 on Windows 10 with mingw64 (mingw-w64-x86_64-llvm and mingw-w64-x86_64-clang).  
+And I also added function level optimization passes.
 
 # my_toy_compiler
 Source code for "My Toy Compiler". Read about how I did on my blog:
